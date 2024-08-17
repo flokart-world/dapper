@@ -43,8 +43,7 @@ This resolution is done by iterations of call to the "dappi" command we've bundl
 After iterations are done, the information of the selected packages are passed to the package manager.
 
 dappi is a simple program which takes informations of all available packages in JSON format from standard input and emits CMake commands to standard output.
-It currently invokes just a basic SAT solver, so there's no functionality to prior higher package versions yet.
-Further improvements are needed.
+It invokes a basic SAT solver multiple times, in order to prefer higher versions as much as possible.
 
 ## How to try demo
 
