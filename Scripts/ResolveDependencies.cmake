@@ -542,7 +542,6 @@ message (STATUS "Resolving dependencies: done.")
 _DAPPER_ALL_RELEVANT_NAMES(-allNames)
 list (SORT -allNames)
 set (-useFileLines)
-set (-lockFileLines)
 foreach (-name IN LISTS -allNames)
   _DAPPER_NAME_PREFIX(-namePrefix "${-name}")
   get_property (-dapId GLOBAL PROPERTY "${-namePrefix}SelectedPackage")
@@ -561,29 +560,7 @@ foreach (-name IN LISTS -allNames)
     "  REVISION \"${-revision}\"\n"
     ")\n"
   )
-  list (
-    APPEND
-    -lockFileLines
-    "DAP(\n"
-    "  NAME \"${-name}\"\n"
-    "  REQUIRE \"= ${-version}\"\n"
-    "  LOCATION \"${-url}#${-revision}\"\n"
-    ")\n"
-  )
 endforeach ()
 
 string (JOIN "" -fileBody ${-useFileLines})
 file (WRITE "${DAPPER_BINARY_DIR}/ResolvedDependencies.cmake" "${-fileBody}")
-
-string (JOIN "" -fileBody ${-lockFileLines})
-set (-lockFile "${DAPPER_SOURCE_DIR}/DependencyAwarenessLock.cmake")
-set (-lockChanged true)
-if (EXISTS "${-lockFile}")
-  file (READ "${-lockFile}" -existingFileBody)
-  if (-fileBody STREQUAL -existingFileBody)
-    set (-lockChanged false)
-  endif ()
-endif ()
-if (-lockChanged)
-  file (WRITE "${-lockFile}" "${-fileBody}")
-endif ()
