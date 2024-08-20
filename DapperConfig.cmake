@@ -51,6 +51,8 @@ function (_DAPPER_RESOLVE_DEPENDENCIES -outDepsFile -integration)
     -D "DAPPER_ROOT_DIR=${Dapper_DIR}"
     -D "DAPPER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
     -D "DAPPER_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+    -D "DAPPER_PROJECT_NAME=${PROJECT_NAME}"
+    -D "DAPPER_PROJECT_VERSION=${PROJECT_VERSION}"
     -D "DAPPER_REPOSITORIES_DIR=${-reposDir}"
     ${-arg_OPTIONS}
     -P "${Dapper_DIR}/Scripts/ResolveDependencies.cmake"
