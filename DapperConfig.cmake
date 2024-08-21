@@ -63,6 +63,7 @@ function (_DAPPER_RESOLVE_DEPENDENCIES -outDepsFile -integration)
     COMMAND "${CMAKE_COMMAND}" ${-commandArgs}
     VERBATIM
   )
+  set_target_properties (dapper-install PROPERTIES FOLDER "Dapper")
 
   if (NOT EXISTS "${-depsFile}")
     execute_process (
