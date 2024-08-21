@@ -160,21 +160,42 @@ function (DAPPI_SELECT -name -dapId)
 endfunction ()
 
 function (_DAPPER_CLONE_OR_PULL -url -sourceDir)
+  file (LOCK "${-sourceDir}.lock" GUARD FUNCTION)
+
   if (EXISTS "${-sourceDir}")
-    message (STATUS "Synchronizing ${-sourceDir} with ${-url}")
+    message (STATUS "Validating ${-sourceDir}")
     execute_process (
-      COMMAND "${GIT_EXECUTABLE}" -C "${-sourceDir}" pull --tags
+      COMMAND
+        "${GIT_EXECUTABLE}"
+        -C "${-sourceDir}"
+        fsck --connectivity-only --no-dangling
       RESULT_VARIABLE -code
-      ERROR_QUIET
-      OUTPUT_QUIET
     )
-    if (NOT -code EQUAL 0)
-      message (FATAL "git pull failed.")
+    if (-code EQUAL 0)
+      message (STATUS "Synchronizing ${-sourceDir} with ${-url}")
+      execute_process (
+        COMMAND "${GIT_EXECUTABLE}" -C "${-sourceDir}" fetch --all --tags
+        RESULT_VARIABLE -code
+        ERROR_QUIET
+        OUTPUT_QUIET
+      )
+      if (NOT -code EQUAL 0)
+        message (FATAL_ERROR "git fetch failed.")
+      endif ()
+      set (-clone false)
+    else ()
+      message (STATUS "A broken repository found. Cleaning up...")
+      file (REMOVE_RECURSE "${-sourceDir}")
+      set (-clone true)
     endif ()
   else ()
+    set (-clone true)
+  endif ()
+
+  if (-clone)
     message (STATUS "Cloning ${-url} into ${-sourceDir}")
     execute_process (
-      COMMAND "${GIT_EXECUTABLE}" clone "${-url}" "${-sourceDir}"
+      COMMAND "${GIT_EXECUTABLE}" clone --bare "${-url}" "${-sourceDir}"
       RESULT_VARIABLE -code
       ERROR_QUIET
       OUTPUT_QUIET
