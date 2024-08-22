@@ -291,19 +291,19 @@ int main() {
      * least_partial_penalty_count(last, 0) is always true for any last.
      *
      * Where last = 0 and num = 1, (Case A)
-     * least_partial_penalty_count(last, num) implies penalty[last].
+     * least_partial_penalty_count(last, num) is implied by penalty[last].
      *
      * Where last > 0 and 0 < num <= last, (Case B)
-     * least_partial_penalty_count(last, num) implies
+     * least_partial_penalty_count(last, num) is implied by
      *   least_partial_penalty_count(last - 1, num) or
      *   penalty[last] and least_partial_penalty_count(last - 1, num - 1).
      *
      * For the special case where last > 0 and num = 1, (Case B')
-     * least_partial_penalty_count(last, num) implies
+     * least_partial_penalty_count(last, num) is implied by
      *   least_partial_penalty_count(last - 1, num) or penalty[last].
      *
      * Where last > 0 and num = last + 1, (Case C)
-     * least_partial_penalty_count(last, num) implies
+     * least_partial_penalty_count(last, num) is implied by
      *   penalty[last] and least_partial_penalty_count(last - 1, num - 1).
      */
     if (!penalties.empty()) {
@@ -326,8 +326,8 @@ int main() {
         // Case A
         new_var = resolution.newVar();
         resolution.addClause(
-            ~Minisat::mkLit(new_var),
-            Minisat::mkLit(penalties[0])
+            Minisat::mkLit(new_var),
+            ~Minisat::mkLit(penalties[0])
         );
         least_partial_count(0, 1) = new_var;
 
@@ -335,9 +335,12 @@ int main() {
             // Case B'
             new_var = resolution.newVar();
             resolution.addClause(
-                ~Minisat::mkLit(new_var),
-                Minisat::mkLit(least_partial_count(last - 1, 1)),
-                Minisat::mkLit(penalties[last])
+                Minisat::mkLit(new_var),
+                ~Minisat::mkLit(least_partial_count(last - 1, 1))
+            );
+            resolution.addClause(
+                Minisat::mkLit(new_var),
+                ~Minisat::mkLit(penalties[last])
             );
             least_partial_count(last, 1) = new_var;
 
@@ -345,14 +348,13 @@ int main() {
             for (std::size_t num = 2; num <= last; ++num) {
                 new_var = resolution.newVar();
                 resolution.addClause(
-                    ~Minisat::mkLit(new_var),
-                    Minisat::mkLit(least_partial_count(last - 1, num)),
-                    Minisat::mkLit(penalties[last])
+                    Minisat::mkLit(new_var),
+                    ~Minisat::mkLit(least_partial_count(last - 1, num))
                 );
                 resolution.addClause(
-                    ~Minisat::mkLit(new_var),
-                    Minisat::mkLit(least_partial_count(last - 1, num)),
-                    Minisat::mkLit(least_partial_count(last - 1, num - 1))
+                    Minisat::mkLit(new_var),
+                    ~Minisat::mkLit(penalties[last]),
+                    ~Minisat::mkLit(least_partial_count(last - 1, num - 1))
                 );
                 least_partial_count(last, num) = new_var;
             }
@@ -360,12 +362,9 @@ int main() {
             // Case C
             new_var = resolution.newVar();
             resolution.addClause(
-                ~Minisat::mkLit(new_var),
-                Minisat::mkLit(penalties[last])
-            );
-            resolution.addClause(
-                ~Minisat::mkLit(new_var),
-                Minisat::mkLit(least_partial_count(last - 1, last))
+                Minisat::mkLit(new_var),
+                ~Minisat::mkLit(penalties[last]),
+                ~Minisat::mkLit(least_partial_count(last - 1, last))
             );
             least_partial_count(last, last + 1) = new_var;
         }
@@ -373,8 +372,8 @@ int main() {
         /*
          * Now we improve the model by adding assumption.
          */
-        for (size_t past_num = penalties.size(); past_num > 0; --past_num) {
-            auto assumption = ~Minisat::mkLit(least_count(past_num - 1));
+        for (size_t num = penalties.size() - 1; num > 1; --num) {
+            auto assumption = ~Minisat::mkLit(least_count(num));
             if (!resolution.solve(assumption)) {
                 break;
             }
