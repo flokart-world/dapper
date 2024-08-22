@@ -372,7 +372,7 @@ int main() {
         /*
          * Now we improve the model by adding assumption.
          */
-        for (size_t num = penalties.size() - 1; num > 1; --num) {
+        for (size_t num = penalties.size() - 1; num > 0; --num) {
             auto assumption = ~Minisat::mkLit(least_count(num));
             if (!resolution.solve(assumption)) {
                 break;
