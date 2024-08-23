@@ -21,19 +21,14 @@ function (BUILD_REPOSITORY -name)
   execute_process (COMMAND "${GIT_EXECUTABLE}" -C "${-repoDir}" init)
   file (
     GLOB -patches RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/${-name}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/${-name}/*.patch.in"
+      "${CMAKE_CURRENT_SOURCE_DIR}/${-name}/*.patch"
   )
   foreach (-patch IN LISTS -patches)
-    string (REGEX REPLACE "\.in$" "" -fileName "${-patch}")
-    string (REGEX REPLACE "\.patch$" "" -tag "${-fileName}")
-    configure_file (
-      "${-name}/${-patch}" "patches/${-name}/${-fileName}"
-      @ONLY NEWLINE_STYLE LF
-    )
+    string (REGEX REPLACE "\.patch$" "" -tag "${-patch}")
     execute_process (
       COMMAND
         "${GIT_EXECUTABLE}" -C "${-repoDir}"
-        am "${CMAKE_CURRENT_BINARY_DIR}/patches/${-name}/${-fileName}"
+        am "${CMAKE_CURRENT_SOURCE_DIR}/${-name}/${-patch}"
     )
     execute_process (COMMAND "${GIT_EXECUTABLE}" -C "${-repoDir}" tag "${-tag}")
   endforeach ()
@@ -43,14 +38,9 @@ BUILD_REPOSITORY(sub-a)
 BUILD_REPOSITORY(sub-b)
 BUILD_REPOSITORY(sub-c)
 
-configure_file (
-  DependencyAwareness.yml.in
-  "${CMAKE_CURRENT_SOURCE_DIR}/DependencyAwareness.yml"
-  @ONLY NEWLINE_STYLE LF
-)
-
 set_property (GLOBAL PROPERTY USE_FOLDERS true)
-DAPPER_INTEGRATE_WITH(CPM)
+set (DAPPER_CONFIG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/Hosts.cmake")
+DAPPER_INTEGRATE_WITH(CPM OPTIONS "DEMO_DIR=${DEMO_DIR}")
 
 CPMGetPackage(sub-a)
 CPMGetPackage(sub-b)

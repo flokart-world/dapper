@@ -20,6 +20,53 @@
 
 cmake_minimum_required (VERSION 3.18)
 
+function (DAPPER_REGISTER_HOST -host -handler)
+  set_property (GLOBAL PROPERTY "Dapper::Hosts::${-host}" "${-handler}")
+endfunction ()
+
+function (_DAPPER_RESOLVE_LOCATION -out -location)
+  if (-location MATCHES [=[^(([^:;@]+)@)?([0-9a-zA-Z_\-\.]+):([^:;]+)$]=])
+    set (-user "${CMAKE_MATCH_2}")
+    set (-host "${CMAKE_MATCH_3}")
+    set (-path "${CMAKE_MATCH_4}")
+    set (-schemes http https)
+    if (-user STREQUAL "" AND -host IN_LIST -schemes)
+      # It seems to be a physical URL.
+      set (-resolved "${-location}")
+    else ()
+      get_property (-handler GLOBAL PROPERTY "Dapper::Hosts::${-host}")
+      if (-handler)
+        set (-args HOST "${-host}" PATH "${-path}")
+        if (NOT -user STREQUAL "")
+          list (APPEND -args USER "${-user}")
+        endif ()
+        cmake_language (CALL "${-handler}" -resolved ${-args})
+      else ()
+        # Falling back
+        set (-resolved "${-location}")
+      endif ()
+    endif ()
+  else ()
+    message (VERBOSE "Encountered invalid location - ${-location}")
+    set (-resolved)
+  endif ()
+  set ("${-out}" "${-resolved}" PARENT_SCOPE)
+endfunction ()
+
+function (_DAPPER_HANDLE_GITHUB -out)
+  cmake_parse_arguments (PARSE_ARGV 1 -arg "" "HOST;USER;PATH" "")
+  if (DEFINED -arg_USER)
+    message (
+      VERBOSE "Ignoring user ${-arg_USER} specified on host ${-arg_HOST}"
+    )
+  endif ()
+  set ("${-out}" "https://github.com/${-arg_PATH}.git" PARENT_SCOPE)
+endfunction ()
+
+function (DAPPER_DEFINE_PRESET_HOSTS)
+  DAPPER_REGISTER_HOST(github _DAPPER_HANDLE_GITHUB)
+endfunction ()
+
 function (_DAPPER_DECLARATION_PREFIX -outPrefix -id)
   set ("${-outPrefix}" "Dapper::Declarations::${-id}::" PARENT_SCOPE)
 endfunction ()
@@ -184,8 +231,14 @@ function (DAPPI_SELECT -name -dapId)
   endif ()
 endfunction ()
 
-function (_DAPPER_CLONE_OR_PULL -url -sourceDir)
+function (_DAPPER_CLONE_OR_PULL -out -url -sourceDir)
   file (LOCK "${-sourceDir}.lock" GUARD FUNCTION)
+  _DAPPER_RESOLVE_LOCATION(-url "${-url}")
+
+  if (NOT -url)
+    set ("${-out}" false PARENT_SCOPE)
+    return ()
+  endif ()
 
   if (EXISTS "${-sourceDir}")
     message (STATUS "Validating ${-sourceDir}")
@@ -226,9 +279,10 @@ function (_DAPPER_CLONE_OR_PULL -url -sourceDir)
       OUTPUT_QUIET
     )
     if (NOT -code EQUAL 0)
-      message (FATAL "git clone failed.")
+      message (FATAL_ERROR "git clone failed.")
     endif ()
   endif ()
+  set ("${-out}" true PARENT_SCOPE)
 endfunction ()
 
 function (_DAPPER_FETCH -outHashes)
@@ -245,27 +299,30 @@ function (_DAPPER_FETCH -outHashes)
     endif ()
   else ()
     set (-sourceDir "${DAPPER_REPOSITORIES_DIR}/${-urlHash}")
-    _DAPPER_CLONE_OR_PULL("${-arg_GIT_REPOSITORY}" "${-sourceDir}")
-    execute_process (
-      COMMAND
-        "${GIT_EXECUTABLE}" -C "${-sourceDir}" tag
-      OUTPUT_VARIABLE
-        -tags
-    )
-    string (REPLACE "\n" ";" -tags "${-tags}")
-    list (REMOVE_ITEM -tags "")
+    _DAPPER_CLONE_OR_PULL(-valid "${-arg_GIT_REPOSITORY}" "${-sourceDir}")
 
     set (-exposed)
-    foreach (-tag IN LISTS -tags)
-      # Ignoring pre-releases right now
-      if (-tag MATCHES "^v[0-9]+(\\.[0-9]+)?(\\.[0-9]+)?(\\.[0-9]+)?$")
-        list (APPEND -exposed "${-tag}")
+    if (-valid)
+      execute_process (
+        COMMAND
+          "${GIT_EXECUTABLE}" -C "${-sourceDir}" tag
+        OUTPUT_VARIABLE
+          -tags
+      )
+      string (REPLACE "\n" ";" -tags "${-tags}")
+      list (REMOVE_ITEM -tags "")
+
+      foreach (-tag IN LISTS -tags)
+        # Ignoring pre-releases right now
+        if (-tag MATCHES "^v[0-9]+(\\.[0-9]+)?(\\.[0-9]+)?(\\.[0-9]+)?$")
+          list (APPEND -exposed "${-tag}")
+        endif ()
+      endforeach ()
+      if (DEFINED -arg_GIT_TAG)
+        list (APPEND -exposed "${-arg_GIT_TAG}")
       endif ()
-    endforeach ()
-    if (DEFINED -arg_GIT_TAG)
-      list (APPEND -exposed "${-arg_GIT_TAG}")
+      list (REMOVE_DUPLICATES -exposed)
     endif ()
-    list (REMOVE_DUPLICATES -exposed)
 
     set_property (GLOBAL PROPERTY "${-prefix}URL" "${-arg_GIT_REPOSITORY}")
     set_property (GLOBAL PROPERTY "${-prefix}SourceDir" "${-sourceDir}")
@@ -321,6 +378,21 @@ function (_DAPPER_ALL_RELEVANT_NAMES -outNames)
 endfunction ()
 
 find_package (Git REQUIRED)
+
+if (DAPPER_CONFIG_FILE AND EXISTS "${DAPPER_CONFIG_FILE}")
+  include ("${DAPPER_CONFIG_FILE}")
+else ()
+  if (DAPPER_CONFIG_FILE)
+    message (
+      STATUS "${DAPPER_CONFIG_FILE} does not exist. Applying defaults..."
+    )
+  else ()
+    message (
+      STATUS "Configuration file is not specified. Applying defaults..."
+    )
+  endif ()
+  DAPPER_DEFINE_PRESET_HOSTS()
+endif ()
 
 set (-dappiBinDir "${DAPPER_BINARY_DIR}/dappi")
 find_program (

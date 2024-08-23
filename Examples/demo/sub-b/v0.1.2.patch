@@ -18,7 +18,7 @@ index 277c0db..8e95480 100644
  dependencies:
    sub-c:
 +    require: ">= 0.2.0"
-     location: "@DEMO_DIR@/sub-c"
+     location: "demo:sub-c"
 -- 
 2.35.1
 

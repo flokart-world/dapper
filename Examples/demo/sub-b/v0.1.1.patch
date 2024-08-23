@@ -26,7 +26,7 @@ index f61f553..277c0db 100644
 +version: "0.1.1"
 +dependencies:
 +  sub-c:
-+    location: "@DEMO_DIR@/sub-c"
++    location: "demo:sub-c"
 -- 
 2.35.1
 

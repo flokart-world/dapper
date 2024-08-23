@@ -46,6 +46,12 @@ function (_DAPPER_RESOLVE_DEPENDENCIES -outDepsFile -integration)
 
   set (-depsFile "${CMAKE_CURRENT_BINARY_DIR}/ResolvedDependencies.cmake")
   list (TRANSFORM -arg_OPTIONS PREPEND "-D")
+
+  set (-configFile "${DAPPER_CONFIG_FILE}")
+  if (NOT -configFile)
+    set (-configFile "$ENV{DAPPER_CONFIG_FILE}")
+  endif ()
+
   set (
     -commandArgs
     -D "DAPPER_ROOT_DIR=${Dapper_DIR}"
@@ -54,6 +60,7 @@ function (_DAPPER_RESOLVE_DEPENDENCIES -outDepsFile -integration)
     -D "DAPPER_PROJECT_NAME=${PROJECT_NAME}"
     -D "DAPPER_PROJECT_VERSION=${PROJECT_VERSION}"
     -D "DAPPER_REPOSITORIES_DIR=${-reposDir}"
+    -D "DAPPER_CONFIG_FILE=${-configFile}"
     ${-arg_OPTIONS}
     -P "${Dapper_DIR}/Scripts/ResolveDependencies.cmake"
   )
