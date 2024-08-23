@@ -1,0 +1,21 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shintaro Sakahara <skhrshin@flokart.world>
+Date: Thu, 22 Aug 2024 19:27:16 +0900
+Subject: [PATCH] Version 0.1.0
+
+---
+ DependencyAwareness.yml | 2 ++
+ 1 file changed, 2 insertions(+)
+ create mode 100644 DependencyAwareness.yml
+
+diff --git a/DependencyAwareness.yml b/DependencyAwareness.yml
+new file mode 100644
+index 0000000..f61f553
+--- /dev/null
++++ b/DependencyAwareness.yml
+@@ -0,0 +1,2 @@
++name: sub-b
++version: "0.1.0"
+-- 
+2.35.1
+

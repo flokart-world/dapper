@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shintaro Sakahara <skhrshin@flokart.world>
+Date: Thu, 22 Aug 2024 19:20:41 +0900
+Subject: [PATCH] Version 0.1.1
+
+---
+ CMakeLists.txt          | 1 +
+ DependencyAwareness.yml | 5 ++++-
+ 2 files changed, 5 insertions(+), 1 deletion(-)
+ create mode 100644 CMakeLists.txt
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+new file mode 100644
+index 0000000..087e538
+--- /dev/null
++++ b/CMakeLists.txt
+@@ -0,0 +1 @@
++CPMGetPackage(sub-c)
+diff --git a/DependencyAwareness.yml b/DependencyAwareness.yml
+index 8041582..c7e46e1 100644
+--- a/DependencyAwareness.yml
++++ b/DependencyAwareness.yml
+@@ -1,2 +1,5 @@
+ name: sub-a
+-version: "0.1.0"
++version: "0.1.1"
++dependencies:
++  sub-c:
++    location: "@DEMO_DIR@/sub-c"
+-- 
+2.35.1
+

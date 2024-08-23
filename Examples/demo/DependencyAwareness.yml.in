@@ -1,0 +1,9 @@
+name: demo
+version: "0.1.0"
+dependencies:
+  sub-a:
+    require: ">= 0.1.1"
+    location: "@DEMO_DIR@/sub-a"
+  sub-b:
+    require: ">= 0.1.2"
+    location: "@DEMO_DIR@/sub-b"

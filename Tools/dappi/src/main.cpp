@@ -25,12 +25,20 @@
 #include <map>
 #include <iostream>
 #include <string>
+#include <vector>
 #include <unordered_map>
 #include <nlohmann/json.hpp>
+#include <yaml-cpp/yaml.h>
 #include <semver.hpp>
 #include <minisat/core/Solver.h>
 
 namespace {
+
+struct required_dependency {
+    std::string name;
+    std::string require;
+    std::vector<std::string> locations;
+};
 
 struct dap {
     Minisat::Var var;
@@ -49,9 +57,264 @@ struct name {
     std::vector<named_dap> candidates;
 };
 
-} // namespace
+std::pair<required_dependency, bool> parse_dependency(
+    const YAML::Node &name,
+    const YAML::Node &value,
+    bool strict
+) {
+    required_dependency result;
+    bool well_formed = true;
+    if (value.Type() == YAML::NodeType::Map) {
+        result.name = name.as<std::string>();
 
-int main() {
+        auto require_node = value["require"];
+        if (require_node) {
+            switch (require_node.Type()) {
+            case YAML::NodeType::Scalar:
+                result.require = require_node.as<std::string>();
+                break;
+            default:
+                if (strict) {
+                    std::cerr << "ERROR: require is not a scalar."
+                              << std::endl;
+                }
+                well_formed = false;
+                break;
+            }
+        }
+
+        auto location_node = value["location"];
+        if (location_node) {
+            switch (location_node.Type()) {
+            case YAML::NodeType::Scalar:
+                result.locations = { location_node.as<std::string>() };
+                break;
+            case YAML::NodeType::Sequence:
+                result.locations.reserve(location_node.size());
+                for (auto elem : location_node) {
+                    if (elem.Type() == YAML::NodeType::Scalar) {
+                        result.locations.push_back(elem.as<std::string>());
+                    } else {
+                        if (strict) {
+                            std::cerr << "ERROR: A location is not a scalar."
+                                      << std::endl;
+                        }
+                        well_formed = false;
+                    }
+                }
+                break;
+            default:
+                if (strict) {
+                    std::cerr << "ERROR: location is invalid." << std::endl;
+                }
+                well_formed = false;
+                break;
+            }
+        }
+    } else {
+        if (strict) {
+            std::cerr << "ERROR: A dependency is not a map." << std::endl;
+        }
+        well_formed = false;
+    }
+    return std::make_pair(std::move(result), well_formed);
+}
+
+int load_da(const char *filename, bool strict) {
+    YAML::Node doc;
+    try {
+        doc = YAML::LoadFile(filename);
+    } catch (std::exception &) {
+        std::cerr << "ERROR: Failed to read YAML from " << filename
+                  << std::endl;
+        return 1;
+    }
+
+    std::string name;
+    std::string version;
+    std::list<required_dependency> dependencies;
+
+    bool well_formed = true;
+    if (doc.Type() == YAML::NodeType::Map) {
+        auto name_node = doc["name"];
+        if (name_node) {
+            switch (name_node.Type()) {
+            case YAML::NodeType::Scalar:
+                name = name_node.as<std::string>();
+                break;
+            default:
+                if (strict) {
+                    std::cerr << "ERROR: name is not a scalar." << std::endl;
+                }
+                well_formed = false;
+                break;
+            }
+        }
+
+        auto version_node = doc["version"];
+        if (version_node) {
+            switch (version_node.Type()) {
+            case YAML::NodeType::Scalar:
+                version = version_node.as<std::string>();
+                break;
+            default:
+                if (strict) {
+                    std::cerr << "ERROR: version is not a scalar."
+                              << std::endl;
+                }
+                well_formed = false;
+                break;
+            }
+        }
+
+        auto deps_node = doc["dependencies"];
+        if (deps_node) {
+            switch (deps_node.Type()) {
+            case YAML::NodeType::Map:
+                for (auto dep_node : deps_node) {
+                    auto [new_dep, valid] = parse_dependency(
+                        dep_node.first,
+                        dep_node.second,
+                        strict
+                    );
+                    if (valid) {
+                        dependencies.push_back(std::move(new_dep));
+                    } else {
+                        well_formed = false;
+                    }
+                }
+                break;
+            default:
+                if (strict) {
+                    std::cerr << "ERROR: dependencies is not a map."
+                              << std::endl;
+                }
+                well_formed = false;
+                break;
+            }
+        }
+    } else {
+        if (strict) {
+            std::cerr << "ERROR: The document is not a map." << std::endl;
+        }
+        well_formed = false;
+    }
+
+    if (well_formed) {
+
+        /* TODO : Escape CMake strings */
+
+        std::cout << "DAP_INFO(" << std::endl;
+        if (!name.empty()) {
+            std::cout << "  NAME " << name << std::endl;
+        }
+        if (!version.empty()) {
+            std::cout << "  VERSION " << version << std::endl;
+        }
+        std::cout << ")" << std::endl;
+
+        for (auto dep : dependencies) {
+            std::cout << "DAP(" << std::endl
+                      << "  NAME " << dep.name << std::endl;
+            if (!dep.require.empty()) {
+                std::cout << "  REQUIRE \"" << dep.require << "\""
+                          << std::endl;
+            }
+            if (!dep.locations.empty()) {
+                std::cout << "  LOCATION" << std::endl;
+                for (auto location : dep.locations) {
+                    std::cout << "    \"" << location << "\"" << std::endl;
+                }
+            }
+            std::cout << ")" << std::endl;
+        }
+
+        return 0;
+    } else if (strict) {
+        return 1;
+    } else {
+        /* This revision is to be skipped. */
+        return 0;
+    }
+}
+
+int load_dal(const char * /* filename */, bool /* strict */) {
+
+    /* TODO */
+
+    return 0;
+}
+
+int load(int argc, char *argv[]) {
+    bool strict = false;
+    const char *input = nullptr;
+    int (*loader)(const char *, bool) = nullptr;
+
+    int pos = 0;
+    while (pos < argc) {
+        std::string_view arg = argv[pos++];
+        if (arg == "-t") {
+            if (loader) {
+                std::cerr << "ERROR: More than one -t are specified."
+                          << std::endl;
+                return 1;
+            } else if (pos == argc) {
+                std::cerr << "ERROR: -t requires subsequent argument."
+                          << std::endl;
+                return 1;
+            } else {
+                std::string_view type_str = argv[pos++];
+                if (type_str == "da") {
+                    loader = load_da;
+                } else if (type_str == "dal") {
+                    loader = load_dal;
+                } else {
+                    std::cerr << "ERROR: Unknown type - " << type_str
+                              << std::endl;
+                    return 1;
+                }
+            }
+        } else if (arg == "-i") {
+            if (input) {
+                std::cerr << "ERROR: More than one -i are specified."
+                          << std::endl;
+                return 1;
+            } else if (pos == argc) {
+                std::cerr << "ERROR: -i requires subsequent argument."
+                          << std::endl;
+                return 1;
+            } else {
+                input = argv[pos++];
+            }
+        } else if (arg == "--strict") {
+            strict = true;
+        } else {
+            std::cerr << "ERROR: Unrecognized argument - " << arg << std::endl;
+            return 1;
+        }
+    }
+
+    if (!input) {
+        std::cerr << "ERROR: -i option is mandatory." << std::endl;
+        return 1;
+    }
+
+    if (loader) {
+        return loader(input, strict);
+    } else {
+        std::cerr << "ERROR: -t option is mandatory." << std::endl;
+        return 1;
+    }
+}
+
+int save(int /* argc */, char * /* argv */[]) {
+
+    /* TODO */
+
+    return 0;
+}
+
+int run(int, char *[]) {
     nlohmann::json state;
     try {
         std::cin >> state;
@@ -394,4 +657,32 @@ int main() {
     }
 
     return 0;
+}
+
+} // namespace
+
+int main(int argc, char *argv[]) {
+    int pos = 1;
+    int (*subcommand)(int, char *[]) = nullptr;
+
+    if (pos < argc) {
+        std::string_view arg = argv[pos++];
+        if (arg == "load") {
+            subcommand = load;
+        } else if (arg == "save") {
+            subcommand = save;
+        } else if (arg == "run") {
+            subcommand = run;
+        } else {
+            std::cerr << "ERROR: Unrecognized argument - " << arg << std::endl;
+            return 1;
+        }
+    }
+
+    if (subcommand) {
+        return subcommand(argc - pos, argv + pos);
+    } else {
+        std::cerr << "ERROR: At least one argument is required." << std::endl;
+        return 1;
+    }
 }

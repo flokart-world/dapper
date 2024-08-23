@@ -11,39 +11,32 @@ This implementation is still experimental and not ready for production use.
 
 ## What does it do?
 
-We call package with dependency metadata written in our format DAP : Dependency-Aware Package. Each DAP has DependencyAwareness.cmake file under the package root directory. The file would look like below:
+We call package with dependency metadata written in our format DAP : Dependency-Aware Package. Each DAP has DependencyAwareness.yml file under the package root directory. The file would look like below:
 
-```cmake
-DAP_INFO(
-  NAME my-package
-  VERSION 0.1.0
-)
-
-DAP(
-    NAME dep1
-    REQUIRE ">= 1.0.0"
-    LOCATION "https://github.com/example/dep1.git#v1.2.0"
-)
-DAP(
-    NAME dep2
-    REQUIRE ">= 0.3.0"
-    LOCATION "https://github.com/example/dep2.git#v0.3.5"
-)
+```yaml
+name: my-package
+version: "0.1.0"
+dependencies:
+  dep1:
+    require: ">= 1.0.0"
+    location: "https://example.com/dep1.git"
+  dep2:
+    require: ">= 0.3.0"
+    location: "https://example.com/dep2.git"
 ```
 
-`DAP_INFO` declares the information of the package and `DAP` declares a dependency.
 In this example, the name of the package is "my-package" and version is 0.1.0. It depends on two packages: dep1 1.0.0 or later, and dep2 0.3.0 or later.
 
 When Dapper resolves the dependencies from this package, it clones all repositories declared as locations of dependencies and then looks up all exposed revisions by `git tag` command.
-In current implementation, Dapper visits all DependencyAwareness.cmake files in all exposed revisions found from the cloned repositories and builds the dependency graph.
+In current implementation, Dapper visits DependencyAwareness.yml file in every exposed revision found from the cloned repositories and builds the dependency graph.
 If nested dependencies are discovered, Dapper evaluates them too.
 
 Since there may be version requirement at each dependency, Dapper also ensures that the requirements are satisfied, or fails to process if there are no satisfiable combination.
-This resolution is done by iterations of call to the "dappi" command we've bundled in this project.
+This resolution is done by iterations of call to "run" mode of the "dappi" command we've bundled in this project.
 After iterations are done, the information of the selected packages are passed to the package manager.
 
-dappi is a simple program which takes informations of all available packages in JSON format from standard input and emits CMake commands to standard output.
-It invokes a basic SAT solver multiple times, in order to prefer higher versions as much as possible.
+dappi is a helper program which takes informations of packages in either YAML("load" mode) or JSON("run" mode) format and emits CMake commands.
+In "run" mode, it invokes a basic SAT solver multiple times, in order to prefer higher versions as much as possible.
 
 ## How to try demo
 
@@ -51,5 +44,5 @@ It invokes a basic SAT solver multiple times, in order to prefer higher versions
 $ git clone https://github.com/flokart-world/dapper.git
 $ cmake -B dapper-demo -S dapper/Examples/demo
 $ cd dapper-demo
-$ cmake .
+$ cmake --build . --config Debug -t dapper-install
 ```

@@ -122,30 +122,55 @@ function (DAP)
 endfunction ()
 
 function (_DAPPER_LOAD_DA -dapId -dapDir)
-  set (-daFile "${-dapDir}/DependencyAwareness.cmake")
-  set (dapperDeclarations)
+  set (-daFile "${-dapDir}/DependencyAwareness.yml")
   if (EXISTS "${-daFile}")
+    execute_process (
+      COMMAND "${DAPPI_EXECUTABLE}" load -t da -i "${-daFile}" --strict
+      RESULT_VARIABLE -code
+      OUTPUT_VARIABLE -script
+    )
+    if (NOT -code EQUAL 0)
+      message (FATAL_ERROR "dappi failed.")
+    endif ()
     set (dapperCurrentPackageId "${-dapId}")
     set (dapperCurrentHandler _DAPPER_VISIT)
-    include ("${-daFile}")
+    cmake_language (EVAL CODE "${-script}")
   endif ()
 endfunction ()
 
 function (_DAPPER_PEEK_DA -dapId -dapDir -tag)
+  string (RANDOM LENGTH 16 -tmpKey)
+  set (-daFile "${CMAKE_CURRENT_BINARY_DIR}/dapper/tmp/${-tmpKey}.yml")
+  file (LOCK "${-daFile}.lock")
   execute_process (
     COMMAND
       "${GIT_EXECUTABLE}" -C "${-sourceDir}"
-      show "${-tag}:DependencyAwareness.cmake"
-    RESULT_VARIABLE
-      -code
-    OUTPUT_VARIABLE
-      -daBody
+      show "${-tag}:DependencyAwareness.yml"
+    RESULT_VARIABLE -code
+    OUTPUT_FILE "${-daFile}"
   )
-  set (dapperDeclarations)
   if (-code EQUAL 0)
-    set (dapperCurrentPackageId "${-dapId}")
-    set (dapperCurrentHandler _DAPPER_VISIT)
-    cmake_language (EVAL CODE "${-daBody}")
+    execute_process (
+      COMMAND "${DAPPI_EXECUTABLE}" load -t da -i "${-daFile}"
+      RESULT_VARIABLE -code
+      OUTPUT_VARIABLE -script
+    )
+    file (REMOVE "${-daFile}")
+    if (-code EQUAL 0)
+      set (dapperCurrentPackageId "${-dapId}")
+      set (dapperCurrentHandler _DAPPER_VISIT)
+      cmake_language (EVAL CODE "${-script}")
+      set (-success true)
+    else ()
+      set (-success false)
+    endif ()
+  else ()
+    set (-success true) # Just skip it
+  endif ()
+  file (LOCK "${-daFile}.lock" RELEASE)
+  file (REMOVE "${-daFile}.lock")
+  if (NOT -success)
+    message (FATAL_ERROR "dappi failed.")
   endif ()
 endfunction ()
 
@@ -215,7 +240,7 @@ function (_DAPPER_FETCH -outHashes)
   if (-urlHash IN_LIST -repositories)
     get_property (-sourceDir GLOBAL PROPERTY "${-prefix}SourceDir")
     get_property (-exposed GLOBAL PROPERTY "${-prefix}ExposedRevisions")
-    if (NOT "${-arg_GIT_TAG}" IN_LIST -exposed)
+    if (DEFINED -arg_GIT_TAG AND NOT "${-arg_GIT_TAG}" IN_LIST -exposed)
       list (APPEND -exposed "${-arg_GIT_TAG}")
     endif ()
   else ()
@@ -237,7 +262,9 @@ function (_DAPPER_FETCH -outHashes)
         list (APPEND -exposed "${-tag}")
       endif ()
     endforeach ()
-    list (APPEND -exposed "${-arg_GIT_TAG}")
+    if (DEFINED -arg_GIT_TAG)
+      list (APPEND -exposed "${-arg_GIT_TAG}")
+    endif ()
     list (REMOVE_DUPLICATES -exposed)
 
     set_property (GLOBAL PROPERTY "${-prefix}URL" "${-arg_GIT_REPOSITORY}")
@@ -393,13 +420,19 @@ while (-iteration LESS 100)
       foreach (-location IN LISTS -knownLocations)
         string (REGEX REPLACE "#(.*)$" ";\\1" -parsedLocation "${-location}")
         list (GET -parsedLocation 0 -url)
-        list (GET -parsedLocation 1 -fragment)
+        list (LENGTH -parsedLocation -len)
+        if (-len LESS_EQUAL 1)
+          set (-fetchArgs)
+        else ()
+          list (GET -parsedLocation 1 -fragment)
+          set (-fetchArgs GIT_TAG "${-fragment}")
+        endif ()
 
         _DAPPER_FETCH(
           -hashes
           NAME "${-nameFromDecl}"
           GIT_REPOSITORY "${-url}"
-          GIT_TAG "${-fragment}"
+          ${-fetchArgs}
         )
 
         foreach (-hash IN LISTS -hashes)
@@ -538,7 +571,7 @@ while (-iteration LESS 100)
   set (-inputJsonFile "${DAPPER_BINARY_DIR}/dappi.json")
   file (WRITE "${-inputJsonFile}" "${-json}")
   execute_process (
-    COMMAND "${DAPPI_EXECUTABLE}"
+    COMMAND "${DAPPI_EXECUTABLE}" run
     RESULT_VARIABLE -code
     OUTPUT_VARIABLE -dappiInsts
     INPUT_FILE "${-inputJsonFile}"
