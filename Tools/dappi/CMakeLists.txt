@@ -26,7 +26,13 @@ CPMAddPackage(
   VERSION 2.2.0
 )
 
-add_executable (dappi src/main.cpp)
+add_executable (
+  dappi
+  src/general_violation_counters.cpp
+  src/general_violation_counters.hpp
+  src/main.cpp
+  src/violation_counter_set.hpp
+)
 target_compile_features (dappi PRIVATE cxx_std_17)
 target_link_libraries (
   dappi

@@ -31,6 +31,7 @@
 #include <yaml-cpp/yaml.h>
 #include <semver.hpp>
 #include <minisat/core/Solver.h>
+#include "general_violation_counters.hpp"
 
 namespace {
 
@@ -544,99 +545,15 @@ int run(int, char *[]) {
     }
     save_selections();
 
-    /*
-     * Defining penality counters.
-     *
-     * Assume least_partial_penalty_count(last, num) to be true if there
-     * are at least num true penalties within range [0..last] of defined
-     * penalties.
-     *
-     * least_partial_penalty_count(last, 0) is always true for any last.
-     *
-     * Where last = 0 and num = 1, (Case A)
-     * least_partial_penalty_count(last, num) is implied by penalty[last].
-     *
-     * Where last > 0 and 0 < num <= last, (Case B)
-     * least_partial_penalty_count(last, num) is implied by
-     *   least_partial_penalty_count(last - 1, num) or
-     *   penalty[last] and least_partial_penalty_count(last - 1, num - 1).
-     *
-     * For the special case where last > 0 and num = 1, (Case B')
-     * least_partial_penalty_count(last, num) is implied by
-     *   least_partial_penalty_count(last - 1, num) or penalty[last].
-     *
-     * Where last > 0 and num = last + 1, (Case C)
-     * least_partial_penalty_count(last, num) is implied by
-     *   penalty[last] and least_partial_penalty_count(last - 1, num - 1).
-     */
     if (!penalties.empty()) {
-        std::vector<Minisat::Var> partial_penalty_counters;
-        partial_penalty_counters.resize(
-            penalties.size() * (penalties.size() + 1) / 2
-        );
-        auto least_partial_count = [&](
-            std::size_t last,
-            std::size_t num
-        ) -> decltype (auto) {
-            return partial_penalty_counters [last * (last + 1) / 2 + num - 1];
-        };
-        auto least_count = [&](std::size_t num) {
-            return least_partial_count(penalties.size() - 1, num);
-        };
-
-        Minisat::Var new_var;
-
-        // Case A
-        new_var = resolution.newVar();
-        resolution.addClause(
-            Minisat::mkLit(new_var),
-            ~Minisat::mkLit(penalties[0])
-        );
-        least_partial_count(0, 1) = new_var;
-
-        for (std::size_t last = 1; last < penalties.size(); ++last) {
-            // Case B'
-            new_var = resolution.newVar();
-            resolution.addClause(
-                Minisat::mkLit(new_var),
-                ~Minisat::mkLit(least_partial_count(last - 1, 1))
-            );
-            resolution.addClause(
-                Minisat::mkLit(new_var),
-                ~Minisat::mkLit(penalties[last])
-            );
-            least_partial_count(last, 1) = new_var;
-
-            // Case B
-            for (std::size_t num = 2; num <= last; ++num) {
-                new_var = resolution.newVar();
-                resolution.addClause(
-                    Minisat::mkLit(new_var),
-                    ~Minisat::mkLit(least_partial_count(last - 1, num))
-                );
-                resolution.addClause(
-                    Minisat::mkLit(new_var),
-                    ~Minisat::mkLit(penalties[last]),
-                    ~Minisat::mkLit(least_partial_count(last - 1, num - 1))
-                );
-                least_partial_count(last, num) = new_var;
-            }
-
-            // Case C
-            new_var = resolution.newVar();
-            resolution.addClause(
-                Minisat::mkLit(new_var),
-                ~Minisat::mkLit(penalties[last]),
-                ~Minisat::mkLit(least_partial_count(last - 1, last))
-            );
-            least_partial_count(last, last + 1) = new_var;
-        }
+        auto penalty_counters =
+                make_general_violation_counters(resolution, penalties);
 
         /*
          * Now we improve the model by adding assumption.
          */
-        for (size_t num = penalties.size() - 1; num > 0; --num) {
-            auto assumption = ~Minisat::mkLit(least_count(num));
+        for (std::size_t num = penalties.size() - 1; num > 0; --num) {
+            auto assumption = ~Minisat::mkLit(penalty_counters.at_least(num));
             if (!resolution.solve(assumption)) {
                 break;
             }
