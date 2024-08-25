@@ -49,6 +49,13 @@ struct integrity_t {
     std::string digest;
 };
 
+struct locked_package {
+    semver::version version;
+    std::string location;
+    integrity_t integrity;
+    std::set<std::string> dependencies;
+};
+
 struct dap {
     Minisat::Var var;
     semver::version version;
@@ -250,9 +257,160 @@ int load_da(const char *filename, bool strict) {
     }
 }
 
-int load_dal(const char * /* filename */, bool /* strict */) {
+int load_dal(const char *filename, bool /* strict */) {
+    YAML::Node doc;
+    try {
+        doc = YAML::LoadFile(filename);
+    } catch (std::exception &) {
+        std::cerr << "ERROR: Failed to read YAML from " << filename
+                  << std::endl;
+        return 1;
+    }
 
-    /* TODO */
+    if (doc.Type() != YAML::NodeType::Map) {
+        std::cerr << "ERROR: The document is not a map." << std::endl;
+        return 1;
+    }
+
+    if (auto version_node = doc["version"]; version_node) {
+        switch (version_node.Type()) {
+        case YAML::NodeType::Scalar:
+            if (int version = version_node.as<int>(); version != 1) {
+                std::cerr << "ERROR: Unknown version - " << version
+                          << std::endl;
+                return 1;
+            }
+            break;
+        default:
+            std::cerr << "ERROR: version is not a scalar." << std::endl;
+            return 1;
+        }
+    } else {
+        std::cerr << "ERROR: version does not exist." << std::endl;
+        return 1;
+    }
+
+    auto packages_node = doc["packages"];
+    if (!packages_node) {
+        std::cerr << "ERROR: packages does not exist." << std::endl;
+        return 1;
+    } else if (packages_node.Type() != YAML::NodeType::Map) {
+        std::cerr << "ERROR: packages is not a map." << std::endl;
+        return 1;
+    }
+
+    std::map<std::string, locked_package> locked_packages;
+    for (auto package : packages_node) {
+        auto name = package.first.as<std::string>();
+        locked_package new_package;
+
+        auto &body = package.second;
+        if (body.Type() != YAML::NodeType::Map) {
+            std::cerr << "ERROR: package " << name << " is not a map."
+                      << std::endl;
+            return 1;
+        }
+
+        if (auto version_node = body["version"]; version_node) {
+            if (version_node.Type() == YAML::NodeType::Scalar) {
+                new_package.version = semver::version(
+                    version_node.as<std::string>()
+                );
+            } else {
+                std::cerr << "ERROR: version of package " << name
+                          << " is not a scalar." << std::endl;
+                return 1;
+            }
+        } else {
+            std::cerr << "ERROR: version of package " << name
+                      << " does not exist." << std::endl;
+            return 1;
+        }
+
+        if (auto location_node = body["location"]; location_node) {
+            if (location_node.Type() == YAML::NodeType::Scalar) {
+                new_package.location = location_node.as<std::string>();
+            } else {
+                std::cerr << "ERROR: location of package " << name
+                          << " is not a scalar." << std::endl;
+                return 1;
+            }
+        } else {
+            std::cerr << "ERROR: location of package " << name
+                      << " does not exist." << std::endl;
+            return 1;
+        }
+
+        if (auto integrity_node = body["integrity"]; integrity_node) {
+            if (integrity_node.Type() != YAML::NodeType::Map) {
+                std::cerr << "ERROR: integrity of package " << name
+                          << " is not a map." << std::endl;
+                return 1;
+            }
+
+            if (auto node = integrity_node["algorithm"]; node) {
+                if (node.Type() != YAML::NodeType::Scalar) {
+                    std::cerr << "ERROR: integrity algorithm of package "
+                              << name << " is not a scalar." << std::endl;
+                    return 1;
+                }
+                new_package.integrity.algorithm = node.as<std::string>();
+            } else {
+                std::cerr << "ERROR: integrity algorithm of package " << name
+                          << " does not exist." << std::endl;
+                return 1;
+            }
+
+            if (auto node = integrity_node["digest"]; node) {
+                if (node.Type() != YAML::NodeType::Scalar) {
+                    std::cerr << "ERROR: integrity digest of package "
+                              << name << " is not a scalar." << std::endl;
+                    return 1;
+                }
+                new_package.integrity.digest = node.as<std::string>();
+            } else {
+                std::cerr << "ERROR: integrity digest of package " << name
+                          << " does not exist." << std::endl;
+                return 1;
+            }
+        } else {
+            std::cerr << "ERROR: integrity of package " << name
+                      << " does not exist." << std::endl;
+            return 1;
+        }
+
+        if (auto deps_node = body["dependencies"]; deps_node) {
+            if (deps_node.Type() != YAML::NodeType::Sequence) {
+                std::cerr << "ERROR: dependencies of package " << name
+                          << " is not a sequence." << std::endl;
+                return 1;
+            }
+            for (auto dep : deps_node) {
+                if (dep.Type() != YAML::NodeType::Scalar) {
+                    std::cerr << "ERROR: a dependency from package " << name
+                              << " is not a scalar." << std::endl;
+                    return 1;
+                }
+                new_package.dependencies.insert(dep.as<std::string>());
+            }
+        }
+
+        locked_packages.emplace(name, std::move(new_package));
+    }
+
+    for (auto &[name, body] : locked_packages) {
+
+        /* TODO : Escape CMake strings */
+
+        std::cout << "DAPPI_LOCK(" << std::endl
+                  << "  NAME " << name << std::endl
+                  << "  VERSION " << body.version.to_string() << std::endl
+                  << "  LOCATION \"" << body.location << "\"" << std::endl
+                  << "  INTEGRITY" << std::endl
+                  << "    ALGORITHM " << body.integrity.algorithm << std::endl
+                  << "    DIGEST " << body.integrity.digest << std::endl
+                  << ")" << std::endl;
+    }
 
     return 0;
 }

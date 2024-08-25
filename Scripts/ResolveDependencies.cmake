@@ -75,6 +75,10 @@ function (_DAPPER_NEW_DECLARATION -id)
   set_property (GLOBAL APPEND PROPERTY "Dapper::Declarations" "${-id}")
 endfunction ()
 
+function (_DAPPER_LOCK_PREFIX -outPrefix -name)
+  set ("${-outPrefix}" "Dapper::Locks::${-name}::" PARENT_SCOPE)
+endfunction ()
+
 function (_DAPPER_DAP_PREFIX -outPrefix -dapId)
   set ("${-outPrefix}" "Dapper::DAPs::${-dapId}::" PARENT_SCOPE)
 endfunction ()
@@ -93,6 +97,14 @@ function (_DAPPER_NEW_NAME -name)
   _DAPPER_NAME_PREFIX(-prefix "${-name}")
   set_property (GLOBAL PROPERTY "${-prefix}KnownPackages" "")
   set_property (GLOBAL APPEND PROPERTY "Dapper::Names" "${-name}")
+  _DAPPER_LOCK_PREFIX(-lockPrefix "${-name}")
+  get_property (-location GLOBAL PROPERTY "${-lockPrefix}Location")
+  if (-location)
+    string (SHA256 -hash "${-location}")
+  else ()
+    set (-hash)
+  endif ()
+  set_property (GLOBAL PROPERTY "${-prefix}LockedPackage" "${-hash}")
 endfunction ()
 
 function (_DAPPER_ARRAY_TO_JSON -ret)
@@ -177,11 +189,24 @@ function (_DAPPER_LOAD_DA -dapId -dapDir)
       OUTPUT_VARIABLE -script
     )
     if (NOT -code EQUAL 0)
-      message (FATAL_ERROR "dappi failed.")
+      message (FATAL_ERROR "dappi load failed.")
     endif ()
     set (dapperCurrentPackageId "${-dapId}")
     set (dapperCurrentHandler _DAPPER_VISIT)
     cmake_language (EVAL CODE "${-script}")
+
+    set (-dalFile "${-dapDir}/DependencyAwarenessLock.yml")
+    if (EXISTS "${-dalFile}")
+      execute_process (
+        COMMAND "${DAPPI_EXECUTABLE}" load -t dal -i "${-dalFile}" --strict
+        RESULT_VARIABLE -code
+        OUTPUT_VARIABLE -script
+      )
+      if (NOT -code EQUAL 0)
+        message (FATAL_ERROR "dappi load failed.")
+      endif ()
+      cmake_language (EVAL CODE "${-script}")
+    endif ()
   endif ()
 endfunction ()
 
@@ -272,6 +297,28 @@ function (_DAPPER_CALC_INTEGRITY -outDigest -dapDir -revision)
   endforeach ()
   string (SHA512 -digest "${-hashList}")
   set ("${-outDigest}" "${-digest}" PARENT_SCOPE)
+endfunction ()
+
+function (DAPPI_LOCK)
+  cmake_parse_arguments (
+    PARSE_ARGV 0 -arg "" "NAME;VERSION;LOCATION" "INTEGRITY;DEPENDENCIES"
+  )
+  cmake_parse_arguments (
+    -integrity "" "ALGORITHM;DIGEST" "" ${-arg_INTEGRITY}
+  )
+  if (DEFINED -arg_DEPENDENCIES)
+    set (-deps "${-arg_DEPENDENCIES}")
+  else ()
+    set (-deps)
+  endif ()
+  _DAPPER_LOCK_PREFIX(-lockPrefix "${-arg_NAME}")
+  set_property (GLOBAL PROPERTY "${-lockPrefix}Version" "${-arg_VERSION}")
+  set_property (GLOBAL PROPERTY "${-lockPrefix}Location" "${-arg_LOCATION}")
+  set_property (
+    GLOBAL PROPERTY "${-lockPrefix}IntegrityAlgorithm" "${-integrity_ALGORITHM}"
+  )
+  set_property (GLOBAL PROPERTY "${-lockPrefix}Digest" "${-integrity_DIGEST}")
+  set_property (GLOBAL PROPERTY "${-lockPrefix}Dependencies" "${-deps}")
 endfunction ()
 
 function (DAPPI_SELECT -name -dapId)
@@ -421,10 +468,14 @@ function (_DAPPER_BUILD_JSON -outJson -allNames -allDaps)
       -selectedDapId GLOBAL PROPERTY "${-namePrefix}SelectedPackage"
     )
     if (-selectedDapId)
-      string (
-        CONFIGURE [["@-selectedDapId@"]] -jsonDapId @ONLY ESCAPE_QUOTES
-      )
+      string (CONFIGURE [["@-selectedDapId@"]] -jsonDapId @ONLY ESCAPE_QUOTES)
       list (APPEND -members selected "${-jsonDapId}")
+    endif ()
+
+    get_property (-lockedDapId GLOBAL PROPERTY "${-namePrefix}LockedPackage")
+    if (-lockedDapId)
+      string (CONFIGURE [["@-lockedDapId@"]] -jsonDapId @ONLY ESCAPE_QUOTES)
+      list (APPEND -members locked "${-jsonDapId}")
     endif ()
 
     get_property (-knownDapIds GLOBAL PROPERTY "${-namePrefix}KnownPackages")
@@ -762,19 +813,21 @@ message (STATUS "Checking integrities...")
 foreach (-name IN LISTS -allNames)
   _DAPPER_NAME_PREFIX(-namePrefix "${-name}")
   get_property (-dapId GLOBAL PROPERTY "${-namePrefix}SelectedPackage")
-  _DAPPER_DAP_PREFIX(-dapPrefix "${-dapId}")
-  get_property (-algorithm GLOBAL PROPERTY "${-dapPrefix}IntegrityAlgorithm")
-  if (-algorithm)
+  get_property (-lock GLOBAL PROPERTY "${-namePrefix}LockedPackage")
+  if (-lock STREQUAL -dapId)
+    _DAPPER_LOCK_PREFIX(-lockPrefix "${-name}")
+    get_property (-algorithm GLOBAL PROPERTY "${-lockPrefix}IntegrityAlgorithm")
     if (NOT -algorithm STREQUAL "sha512")
       message (
         FATAL_ERROR
         "Integrity check failed: unsupported algorithm - ${-algorithm}"
       )
     endif ()
-    get_property (-originalDigest GLOBAL PROPERTY "${-dapPrefix}Digest")
+    get_property (-originalDigest GLOBAL PROPERTY "${-lockPrefix}Digest")
   else ()
     set (-originalDigest)
   endif ()
+  _DAPPER_DAP_PREFIX(-dapPrefix "${-dapId}")
   get_property (-sourceDir GLOBAL PROPERTY "${-dapPrefix}SourceDir")
   get_property (-url GLOBAL PROPERTY "${-dapPrefix}URL")
   get_property (-revision GLOBAL PROPERTY "${-dapPrefix}Fragment")
