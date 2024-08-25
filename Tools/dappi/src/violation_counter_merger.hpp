@@ -21,42 +21,47 @@
  *    distribution.
  */
 
-#ifndef VIOLATION_COUNTER_SET_HPP
-#define VIOLATION_COUNTER_SET_HPP
+#ifndef VIOLATION_COUNTER_MERGER_HPP
+#define VIOLATION_COUNTER_MERGER_HPP
 
 #include <cassert>
-#include <vector>
-#include <minisat/core/SolverTypes.h>
+#include <queue>
+#include <minisat/core/Solver.h>
+#include "violation_counter_set.hpp"
 
-/*
- * Represents a set of violation counters for solving MaxSAT problem.
- */
-class violation_counter_set {
+class violation_counter_merger {
 private:
-    std::vector<Minisat::Var> M_violation_counters;
+    struct size_greater {
+        bool operator ()(
+            const violation_counter_set &lhs,
+            const violation_counter_set &rhs
+        ) const noexcept {
+            return (lhs.size() > rhs.size());
+        }
+    };
+
+    std::deque<violation_counter_set> M_queue;
+
+    violation_counter_set pop() noexcept;
 
 public:
-    explicit violation_counter_set(std::vector<Minisat::Var> counters) :
-            M_violation_counters(std::move(counters)) {
+    bool empty() const noexcept {
+        return M_queue.empty();
     }
 
-    auto at_least(std::size_t num) const noexcept {
-        assert(num > 0);
-        assert(!M_violation_counters.empty());
-        return M_violation_counters[num - 1];
+    auto release() noexcept {
+        assert(M_queue.size() == 1);
+        auto result = std::move(M_queue.back());
+        M_queue.pop_back();
+        return result;
     }
 
-    auto size() const noexcept {
-        return M_violation_counters.size();
+    void add(violation_counter_set group) {
+        M_queue.push_back(std::move(group));
+        std::push_heap(M_queue.begin(), M_queue.end(), size_greater());
     }
 
-    auto begin() const noexcept {
-        return M_violation_counters.begin();
-    }
-
-    auto end() const noexcept {
-        return M_violation_counters.end();
-    }
+    void merge(Minisat::Solver &solver);
 };
 
 #endif

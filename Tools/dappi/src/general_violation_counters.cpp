@@ -23,96 +23,20 @@
 
 #include "general_violation_counters.hpp"
 
-#include <cassert>
+#include "violation_counter_merger.hpp"
 
 violation_counter_set make_general_violation_counters(
     Minisat::Solver &solver,
     const std::vector<Minisat::Var> &violations
 ) {
-    /*
-     * Assume least_partial_count(last, num) to be true if there are at least
-     * num violations within range [0..last] of defined soft clauses.
-     *
-     * least_partial_count(last, 0) is always true for any last.
-     *
-     * Where last = 0 and num = 1, (Case A)
-     * least_partial_count(last, num) is implied by violation[last].
-     *
-     * Where last > 0 and 0 < num <= last, (Case B)
-     * least_partial_count(last, num) is implied by
-     *   least_partial_count(last - 1, num) or
-     *   violation[last] and least_partial_count(last - 1, num - 1).
-     *
-     * For the special case where last > 0 and num = 1, (Case B')
-     * least_partial_count(last, num) is implied by
-     *   least_partial_count(last - 1, num) or violation[last].
-     *
-     * Where last > 0 and num = last + 1, (Case C)
-     * least_partial_count(last, num) is implied by
-     *   violation[last] and least_partial_count(last - 1, last).
-     */
-
     if (violations.empty()) {
         return violation_counter_set({});
-    }
-
-    /* [index] corresponds to least_partial_count(last - 1, index + 1) */
-    std::vector<Minisat::Var> previous_counters;
-
-    /* [index] corresponds to least_partial_count(last, index + 1) */
-    std::vector<Minisat::Var> current_counters;
-
-    Minisat::Var new_var;
-
-    // Case A
-    new_var = solver.newVar();
-    solver.addClause(
-        Minisat::mkLit(new_var),
-        ~Minisat::mkLit(violations[0])
-    );
-    current_counters.resize(1);
-    current_counters[0] = new_var;
-
-    for (std::size_t last = 1; last < violations.size(); ++last) {
-        previous_counters = std::move(current_counters);
-        current_counters.resize(last + 1);
-
-        // Case B'
-        new_var = solver.newVar();
-        solver.addClause(
-            Minisat::mkLit(new_var),
-            ~Minisat::mkLit(previous_counters[0])
-        );
-        solver.addClause(
-            Minisat::mkLit(new_var),
-            ~Minisat::mkLit(violations[last])
-        );
-        current_counters[0] = new_var;
-
-        // Case B
-        for (std::size_t num = 2; num <= last; ++num) {
-            new_var = solver.newVar();
-            solver.addClause(
-                Minisat::mkLit(new_var),
-                ~Minisat::mkLit(previous_counters[num - 1])
-            );
-            solver.addClause(
-                Minisat::mkLit(new_var),
-                ~Minisat::mkLit(violations[last]),
-                ~Minisat::mkLit(previous_counters[num - 2])
-            );
-            current_counters[num - 1] = new_var;
+    } else {
+        violation_counter_merger work;
+        for (auto violation : violations) {
+            work.add(violation_counter_set({ violation }));
         }
-
-        // Case C
-        new_var = solver.newVar();
-        solver.addClause(
-            Minisat::mkLit(new_var),
-            ~Minisat::mkLit(violations[last]),
-            ~Minisat::mkLit(previous_counters[last - 1])
-        );
-        current_counters[last] = new_var;
+        work.merge(solver);
+        return work.release();
     }
-
-    return violation_counter_set(std::move(current_counters));
 }

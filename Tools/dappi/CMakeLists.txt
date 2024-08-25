@@ -31,6 +31,8 @@ add_executable (
   src/general_violation_counters.cpp
   src/general_violation_counters.hpp
   src/main.cpp
+  src/violation_counter_merger.cpp
+  src/violation_counter_merger.hpp
   src/violation_counter_set.hpp
 )
 target_compile_features (dappi PRIVATE cxx_std_17)
