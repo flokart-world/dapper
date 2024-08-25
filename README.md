@@ -35,8 +35,10 @@ Since there may be version requirement at each dependency, Dapper also ensures t
 This resolution is done by iterations of call to "run" mode of the "dappi" command we've bundled in this project.
 After iterations are done, the information of the selected packages are passed to the package manager.
 
-dappi is a helper program which takes informations of packages in either YAML("load" mode) or JSON("run" mode) format and emits CMake commands.
-In "run" mode, it invokes a basic SAT solver multiple times, in order to prefer higher versions as much as possible.
+dappi is a helper program which takes informations of packages in either YAML("load" mode) or JSON("run" and "save" mode) format and may emit CMake commands.
+In "run" mode, it invokes a basic SAT solver multiple times, in order to keep selecting the locked packages and prefer higher versions as much as possible.
+
+After the resolution is done, Dapper records versions, locations, and integrities of the selected packages into DependencyAwarenessLock.yml file under the source directory on which `DAPPER_INTEGRATE_WITH` is initially called during the configuration phase of CMake.
 
 ## Defining hosts
 

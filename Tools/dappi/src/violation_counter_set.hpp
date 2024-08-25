@@ -45,6 +45,14 @@ public:
         assert(!M_violation_counters.empty());
         return M_violation_counters[num - 1];
     }
+
+    auto begin() const {
+        return M_violation_counters.begin();
+    }
+
+    auto end() const {
+        return M_violation_counters.end();
+    }
 };
 
 #endif

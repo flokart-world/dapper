@@ -1,0 +1,20 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shintaro Sakahara <skhrshin@flokart.world>
+Date: Sun, 25 Aug 2024 20:04:57 +0900
+Subject: Version 0.3.1
+
+---
+ DependencyAwareness.yml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/DependencyAwareness.yml b/DependencyAwareness.yml
+index 1389ab2..2f2a550 100644
+--- a/DependencyAwareness.yml
++++ b/DependencyAwareness.yml
+@@ -1,2 +1,2 @@
+ name: sub-c
+-version: "0.3.0"
++version: "0.3.1"
+-- 
+2.35.1
+

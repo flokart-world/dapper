@@ -692,6 +692,7 @@ int run(int, char *[]) {
     }
 
     std::vector<Minisat::Var> penalties;
+    std::vector<Minisat::Var> unlocks;
 
     auto names_it = state.find("names");
     if (names_it != state.end()) {
@@ -709,6 +710,16 @@ int run(int, char *[]) {
                     return 1;
                 } else {
                     new_name.selection = found_dap;
+                }
+            }
+
+            bool maybe_unlocked = false;
+            Minisat::Var unlock = Minisat::var_Undef;
+            dap_map_t::iterator locked_dap = daps.end();
+            if (auto it = value.find("locked"); it != value.end()) {
+                locked_dap = daps.find(it->template get<std::string>());
+                if (locked_dap != daps.end()) {
+                    unlock = resolution.newVar();
                 }
             }
 
@@ -738,6 +749,22 @@ int run(int, char *[]) {
                             ~Minisat::mkLit(new_named_dap.var),
                             Minisat::mkLit(found_dap->second.var)
                         );
+
+                        /*
+                         * Any selection other than the locked package is
+                         * counted as an unlock.
+                         */
+                        if (
+                            unlock != Minisat::var_Undef
+                            && found_dap != locked_dap
+                        ) {
+                            resolution.addClause(
+                                ~Minisat::mkLit(new_named_dap.var),
+                                Minisat::mkLit(unlock)
+                            );
+                            maybe_unlocked = true;
+                        }
+
                         candidates.push_back(std::move(new_named_dap));
 
                         auto &ver = found_dap->second.version;
@@ -796,6 +823,10 @@ int run(int, char *[]) {
                     }
                     penalties.push_back(penalty);
                 }
+            }
+
+            if (maybe_unlocked) {
+                unlocks.push_back(unlock);
             }
 
             names.emplace(key, std::move(new_name));
@@ -889,22 +920,54 @@ int run(int, char *[]) {
         std::cerr << "ERROR: Dependency conflicted." << std::endl;
         return 1;
     }
+
     save_selections();
 
+    if (!unlocks.empty()) {
+        /* Now we minimize unlocks. */
+        auto unlock_counters =
+                make_general_violation_counters(resolution, unlocks);
+        auto last_assumption = Minisat::lit_Undef;
+        auto satisfiable = [&](std::nullptr_t, Minisat::Var var) {
+            auto assumption = ~Minisat::mkLit(var);
+            if (resolution.solve(assumption)) {
+                last_assumption = assumption;
+                save_selections();
+                return true;
+            } else {
+                return false;
+            }
+        };
+        std::ignore = std::upper_bound(
+            unlock_counters.begin(),
+            unlock_counters.end(),
+            nullptr,
+            satisfiable
+        );
+        if (last_assumption != Minisat::lit_Undef) {
+            resolution.addClause(last_assumption);
+        }
+    }
+
     if (!penalties.empty()) {
+        /* Now we improve the model */
         auto penalty_counters =
                 make_general_violation_counters(resolution, penalties);
-
-        /*
-         * Now we improve the model by adding assumption.
-         */
-        for (std::size_t num = penalties.size() - 1; num > 0; --num) {
-            auto assumption = ~Minisat::mkLit(penalty_counters.at_least(num));
-            if (!resolution.solve(assumption)) {
-                break;
+        auto satisfiable = [&](std::nullptr_t, Minisat::Var var) {
+            auto assumption = ~Minisat::mkLit(var);
+            if (resolution.solve(assumption)) {
+                save_selections();
+                return true;
+            } else {
+                return false;
             }
-            save_selections();
-        }
+        };
+        std::ignore = std::upper_bound(
+            penalty_counters.begin(),
+            penalty_counters.end(),
+            nullptr,
+            satisfiable
+        );
     }
 
     for (auto &name_pair : names) {
