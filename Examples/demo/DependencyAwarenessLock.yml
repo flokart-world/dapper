@@ -1,0 +1,24 @@
+"version": 1
+"packages":
+  "sub-a":
+    "version": "0.1.1"
+    "location": "demo:sub-a#v0.1.1"
+    "integrity":
+      "algorithm": "sha512"
+      "digest": "4fa2f6903f0c78511966328bc36ae8c1af6e5c22ad489bb956ba4d9884ce66c609a36fa64056c0665904449a152b0c78e80962162645354f14789b3ff6ec459d"
+    "dependencies":
+      - "sub-c"
+  "sub-b":
+    "version": "0.1.2"
+    "location": "demo:sub-b#v0.1.2"
+    "integrity":
+      "algorithm": "sha512"
+      "digest": "14fc39bb78963ba65b6f4180456890d0a88eb176ee78a0f47613442d0b8f03fa0e213abaecc80b2d29db394a52e26abe716831a25d9fa070ae4c89ebebf163a1"
+    "dependencies":
+      - "sub-c"
+  "sub-c":
+    "version": "0.3.0"
+    "location": "demo:sub-c#v0.3.0"
+    "integrity":
+      "algorithm": "sha512"
+      "digest": "c77189bd0c337bce6ff1a975d4044180a99455ce806dee3ecb8c93f029749b42d81535d309d38e221b93369d8009613e629f3ff5800c9691fb93fe2cf72435ad"

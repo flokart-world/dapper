@@ -21,9 +21,12 @@
  *    distribution.
  */
 
+#include <fstream>
+#include <iostream>
 #include <list>
 #include <map>
-#include <iostream>
+#include <optional>
+#include <set>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -41,9 +44,17 @@ struct required_dependency {
     std::vector<std::string> locations;
 };
 
+struct integrity_t {
+    std::string algorithm;
+    std::string digest;
+};
+
 struct dap {
     Minisat::Var var;
     semver::version version;
+    std::string location;
+    std::optional<integrity_t> integrity;
+    std::set<std::string> dependencies;
 };
 
 using dap_map_t = std::unordered_map<std::string, dap>;
@@ -308,9 +319,186 @@ int load(int argc, char *argv[]) {
     }
 }
 
-int save(int /* argc */, char * /* argv */[]) {
+int save(int argc, char *argv[]) {
+    const char *output = nullptr;
 
-    /* TODO */
+    int pos = 0;
+    while (pos < argc) {
+        std::string_view arg = argv[pos++];
+        if (arg == "-o") {
+            if (output) {
+                std::cerr << "ERROR: More than one -o are specified."
+                          << std::endl;
+                return 1;
+            } else if (pos == argc) {
+                std::cerr << "ERROR: -o requires subsequent argument."
+                          << std::endl;
+                return 1;
+            } else {
+                output = argv[pos++];
+            }
+        } else {
+            std::cerr << "ERROR: Unrecognized argument - " << arg << std::endl;
+            return 1;
+        }
+    }
+
+    if (!output) {
+        std::cerr << "ERROR: -o option is mandatory." << std::endl;
+        return 1;
+    }
+
+    nlohmann::json state;
+    try {
+        std::cin >> state;
+    } catch (std::exception &) {
+        std::cerr << "ERROR: Failed to read JSON from stdin." << std::endl;
+        return 1;
+    }
+
+    dap_map_t daps;
+    std::map<std::string, dap_map_t::iterator> names;
+
+    auto daps_it = state.find("daps");
+    if (daps_it != state.end()) {
+        for (auto &[key, value] : daps_it->items()) {
+            dap new_dap;
+
+            auto version_it = value.find("version");
+            if (version_it != value.end()) {
+                new_dap.version = semver::version(
+                    version_it->template get<std::string>()
+                );
+            }
+
+            auto location_it = value.find("location");
+            if (location_it != value.end()) {
+                new_dap.location = location_it->template get<std::string>();
+            }
+
+            auto integrity_it = value.find("integrity");
+            if (integrity_it != value.end()) {
+                integrity_t integrity;
+
+                auto algorithm_it = integrity_it->find("algorithm");
+                if (algorithm_it != integrity_it->end()) {
+                    integrity.algorithm =
+                            algorithm_it->template get<std::string>();
+                }
+
+                auto digest_it = integrity_it->find("digest");
+                if (digest_it != integrity_it->end()) {
+                    integrity.digest =
+                            digest_it->template get<std::string>();
+                }
+
+                new_dap.integrity = std::move(integrity);
+            }
+
+            auto deps_it = value.find("dependencies");
+            if (deps_it != value.end()) {
+                for (auto &dep : *deps_it) {
+                    auto name_it = dep.find("name");
+                    if (name_it != dep.end()) {
+                        new_dap.dependencies.insert(
+                            name_it->template get<std::string>()
+                        );
+                    }
+                }
+            }
+
+            daps.emplace(key, std::move(new_dap));
+        }
+    }
+
+    auto names_it = state.find("names");
+    if (names_it != state.end()) {
+        for (auto &[key, value] : names_it->items()) {
+            auto selected_it = value.find("selected");
+            if (selected_it != value.end()) {
+                auto id = selected_it->template get<std::string>();
+                auto found_dap = daps.find(id);
+                if (found_dap == daps.end()) {
+                    std::cerr << "ERROR: DAP " << id << " not defined."
+                              << std::endl;
+                    return 1;
+                } else {
+                    names.emplace(key, found_dap);
+                }
+            }
+        }
+    }
+
+    YAML::Emitter lockfile;
+    lockfile << YAML::DoubleQuoted
+             << YAML::BeginMap
+             << YAML::Key << "version"
+             << YAML::Value << 1
+             << YAML::Key << "packages"
+             << YAML::Value << YAML::BeginMap;
+
+    for (auto &[name, dap_it] : names) {
+        auto &referenced_dap = dap_it->second;
+        if (!referenced_dap.integrity) {
+            std::cerr << "ERROR: Integrity for DAP " << dap_it->first
+                      << " is blank." << std::endl;
+            return 1;
+        }
+        lockfile << YAML::Key << name
+                 << YAML::Value << YAML::BeginMap
+                 << YAML::Key << "version"
+                 << YAML::Value << referenced_dap.version.to_string()
+                 << YAML::Key << "location"
+                 << YAML::Value << referenced_dap.location
+                 << YAML::Key << "integrity"
+                 << YAML::Value << YAML::BeginMap
+                 << YAML::Key << "algorithm"
+                 << YAML::Value << referenced_dap.integrity->algorithm
+                 << YAML::Key << "digest"
+                 << YAML::Value << referenced_dap.integrity->digest
+                 << YAML::EndMap;
+        if (!referenced_dap.dependencies.empty()) {
+            lockfile << YAML::Key << "dependencies"
+                     << YAML::Value << YAML::BeginSeq;
+            for (auto &name : referenced_dap.dependencies) {
+                lockfile << name;
+            }
+            lockfile << YAML::EndSeq;
+        }
+        lockfile << YAML::EndMap;
+    }
+
+    lockfile << YAML::EndMap << YAML::EndMap << YAML::Newline;
+
+    std::string output_body = lockfile.c_str();
+
+    std::filebuf output_file;
+    output_file.open(output, std::ios::in | std::ios::binary);
+    if (output_file.is_open()) {
+        auto size = output_file.pubseekoff(0, std::ios::end);
+        if (size == output_body.length()) {
+            std::string original;
+            original.resize(output_body.length());
+            output_file.pubseekpos(0);
+            if (
+                output_file.sgetn(original.data(), output_body.length())
+                == output_body.length()
+                && original == output_body
+            ) {
+                /* The lockfile is identical. */
+                return 0;
+            }
+        }
+        output_file.close();
+    }
+
+    output_file.open(output, std::ios::out | std::ios::binary);
+    if (!output_file.is_open()) {
+        std::cerr << "ERROR: Failed to open " << output << " as output."
+                  << std::endl;
+        return 1;
+    }
+    output_file.sputn(output_body.data(), output_body.length());
 
     return 0;
 }
@@ -563,7 +751,10 @@ int run(int, char *[]) {
 
     for (auto &name_pair : names) {
         auto selected_dap = name_pair.second.selection;
-        if (selected_dap != daps.end()) {
+        if (selected_dap == daps.end()) {
+            std::cout << "DAPPI_UNSELECT(" << name_pair.first << ")"
+                      << std::endl;
+        } else {
             std::cout << "DAPPI_SELECT("
                       << name_pair.first
                       << " "

@@ -191,7 +191,7 @@ function (_DAPPER_PEEK_DA -dapId -dapDir -tag)
   file (LOCK "${-daFile}.lock")
   execute_process (
     COMMAND
-      "${GIT_EXECUTABLE}" -C "${-sourceDir}"
+      "${GIT_EXECUTABLE}" -C "${-dapDir}"
       show "${-tag}:DependencyAwareness.yml"
     RESULT_VARIABLE -code
     OUTPUT_FILE "${-daFile}"
@@ -221,6 +221,59 @@ function (_DAPPER_PEEK_DA -dapId -dapDir -tag)
   endif ()
 endfunction ()
 
+function (_DAPPER_CALC_INTEGRITY -outDigest -dapDir -revision)
+  execute_process (
+    COMMAND
+      "${GIT_EXECUTABLE}" -C "${-dapDir}" ls-tree -r --name-only "${-revision}"
+    RESULT_VARIABLE -code
+    OUTPUT_VARIABLE -files
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+  if (NOT -code EQUAL 0)
+    message (FATAL_ERROR "git ls-tree failed at ${-dapDir}.")
+  endif ()
+  string (REPLACE "\n" ";" -files "${-files}")
+  set (-hashList "")
+  foreach (-file IN LISTS -files)
+    # To prevent newlines from being converted, we save each file into
+    # a temporary file and pass it to `cmake -E sha512sum` instead of
+    # calling string(SHA512)
+    set (-error)
+    string (RANDOM LENGTH 16 -tmpKey)
+    set (-tmpFile "${CMAKE_CURRENT_BINARY_DIR}/dapper/tmp/${-tmpKey}")
+    file (LOCK "${-tmpFile}.lock")
+    execute_process (
+      COMMAND "${GIT_EXECUTABLE}" -C "${-dapDir}" show "${-revision}:${-file}"
+      RESULT_VARIABLE -code
+      OUTPUT_FILE "${-tmpFile}"
+    )
+    if (-code EQUAL 0)
+      execute_process (
+        COMMAND "${CMAKE_COMMAND}" -E sha512sum "${-tmpFile}"
+        RESULT_VARIABLE -code
+        OUTPUT_VARIABLE -hash
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+      )
+      file (REMOVE "${-tmpFile}")
+      if (-code EQUAL 0)
+        string (REGEX REPLACE "  .*$" "" -hash "${-hash}")
+      else ()
+        set (-error "cmake -E sha512sum failed.")
+      endif ()
+    else ()
+      set (-error "git show failed at ${-dapDir}.")
+    endif ()
+    file (LOCK "${-tmpFile}.lock" RELEASE)
+    file (REMOVE "${-tmpFile}.lock")
+    if (-error)
+      message (FATAL_ERROR "${-error}")
+    endif ()
+    string (APPEND -hashList "${-hash} ${-file}\n")
+  endforeach ()
+  string (SHA512 -digest "${-hashList}")
+  set ("${-outDigest}" "${-digest}" PARENT_SCOPE)
+endfunction ()
+
 function (DAPPI_SELECT -name -dapId)
   _DAPPER_NAME_PREFIX(-namePrefix "${-name}")
   get_property (-selected GLOBAL PROPERTY "${-namePrefix}SelectedPackage")
@@ -228,6 +281,15 @@ function (DAPPI_SELECT -name -dapId)
     set_property (GLOBAL PROPERTY "${-namePrefix}SelectedPackage" "${-dapId}")
     message (DEBUG "Selecting ${-dapId} as ${-name} (was ${-selected})")
     set (dappiFinished false PARENT_SCOPE)
+  endif ()
+endfunction ()
+
+function (DAPPI_UNSELECT -name)
+  _DAPPER_NAME_PREFIX(-namePrefix "${-name}")
+  get_property (-selected GLOBAL PROPERTY "${-namePrefix}SelectedPackage")
+  if (-selected)
+    set_property (GLOBAL PROPERTY "${-namePrefix}SelectedPackage" false)
+    message (DEBUG "Unselecting ${-name} (was ${-selected})")
   endif ()
 endfunction ()
 
@@ -333,7 +395,8 @@ function (_DAPPER_FETCH -outHashes)
   set (-hashes)
   foreach (-revision IN LISTS -exposed)
     string (SHA256 -hash "${-arg_GIT_REPOSITORY}#${-revision}")
-    if (NOT TARGET "Dapper::DAPs::${-hash}")
+    get_property (-daps GLOBAL PROPERTY "Dapper::DAPs")
+    if (NOT -hash IN_LIST -daps)
       _DAPPER_NEW_DAP("${-hash}")
       _DAPPER_PEEK_DA("${-hash}" "${-sourceDir}" "${-revision}")
 
@@ -346,6 +409,97 @@ function (_DAPPER_FETCH -outHashes)
   endforeach ()
 
   set (${-outHashes} "${-hashes}" PARENT_SCOPE)
+endfunction ()
+
+function (_DAPPER_BUILD_JSON -outJson -allNames -allDaps)
+  set (-namePairs)
+  foreach (-name IN LISTS -allNames)
+    _DAPPER_NAME_PREFIX(-namePrefix "${-name}")
+    set (-members)
+
+    get_property (
+      -selectedDapId GLOBAL PROPERTY "${-namePrefix}SelectedPackage"
+    )
+    if (-selectedDapId)
+      string (
+        CONFIGURE [["@-selectedDapId@"]] -jsonDapId @ONLY ESCAPE_QUOTES
+      )
+      list (APPEND -members selected "${-jsonDapId}")
+    endif ()
+
+    get_property (-knownDapIds GLOBAL PROPERTY "${-namePrefix}KnownPackages")
+    list (APPEND -relevantDaps ${-knownDapIds})
+    _DAPPER_LIST_TO_JSON(-jsonKnown ${-knownDapIds})
+    list (APPEND -members known "${-jsonKnown}")
+
+    _DAPPER_KV_PAIRS_TO_JSON(-jsonName ${-members})
+    list (APPEND -namePairs "${-name}" "${-jsonName}")
+  endforeach ()
+  _DAPPER_KV_PAIRS_TO_JSON(-jsonNames ${-namePairs})
+
+  set (-knownDapPairs)
+  foreach (-dapId IN LISTS -allDaps)
+    _DAPPER_DAP_PREFIX(-dapPrefix "${-dapId}")
+
+    get_property (-version GLOBAL PROPERTY "${-dapPrefix}Version")
+    string (CONFIGURE [["@-version@"]] -jsonVersion @ONLY ESCAPE_QUOTES)
+    set (
+      -jsonMembers
+      [["version":@-jsonVersion@]]
+      [["dependencies":@-jsonDependencies@]]
+    )
+
+    get_property (-url GLOBAL PROPERTY "${-dapPrefix}URL")
+    get_property (-revision GLOBAL PROPERTY "${-dapPrefix}Fragment")
+    if (NOT -url STREQUAL "" AND NOT -revision STREQUAL "")
+      string (
+        CONFIGURE [["@-url@#@-revision@"]] -jsonLocation @ONLY ESCAPE_QUOTES
+      )
+      list (APPEND -jsonMembers [["location":@-jsonLocation@]])
+    endif ()
+
+    get_property (-algorithm GLOBAL PROPERTY "${-dapPrefix}IntegrityAlgorithm")
+    get_property (-digest GLOBAL PROPERTY "${-dapPrefix}Digest")
+    if (-algorithm AND -digest)
+      string (
+        CONFIGURE
+          [[{"algorithm":"@-algorithm@","digest":"@-digest@"}]]
+          -jsonIntegrity @ONLY ESCAPE_QUOTES
+      )
+      list (APPEND -jsonMembers [["integrity":@-jsonIntegrity@]])
+    endif ()
+
+    set (-dependencies)
+    get_property (-declarations GLOBAL PROPERTY "${-dapPrefix}Declarations")
+    foreach (-decl IN LISTS -declarations)
+      _DAPPER_DECLARATION_PREFIX(-declPrefix "${-decl}")
+      get_property (-name GLOBAL PROPERTY "${-declPrefix}Name")
+      if (-name IN_LIST -allNames)
+        get_property (
+          -requiredVersion GLOBAL PROPERTY "${-declPrefix}RequiredVersion"
+        )
+        string (
+          CONFIGURE
+            [[{"name":"@-name@","requiredVersion":"@-requiredVersion@"}]]
+            -jsonDependency @ONLY ESCAPE_QUOTES
+        )
+        list (APPEND -dependencies "${-jsonDependency}")
+      endif ()
+    endforeach ()
+    _DAPPER_ARRAY_TO_JSON(-jsonDependencies ${-dependencies})
+
+    string (JOIN "," -jsonMembers ${-jsonMembers})
+    string (CONFIGURE "{${-jsonMembers}}" -jsonDap @ONLY)
+    list (APPEND -knownDapPairs "${-dapId}" "${-jsonDap}")
+  endforeach ()
+  _DAPPER_KV_PAIRS_TO_JSON(-jsonKnownDaps ${-knownDapPairs})
+
+  string (
+    CONFIGURE
+      [[{"entry":"ROOT","names":@-jsonNames@,"daps":@-jsonKnownDaps@}]]
+      -json @ONLY
+  )
+  set ("${-outJson}" "${-json}" PARENT_SCOPE)
 endfunction ()
 
 function (_DAPPER_ALL_RELEVANT_NAMES -outNames)
@@ -457,13 +611,13 @@ set_property (GLOBAL PROPERTY "${-prefix}SourceDir" "${DAPPER_SOURCE_DIR}")
 _DAPPER_LOAD_DA(ROOT "${DAPPER_SOURCE_DIR}")
 
 set (dappiFinished false)
+set (-inputJsonFile "${DAPPER_BINARY_DIR}/dappi.json")
 set (-iteration 0)
 set (-allDaps ROOT)
 set (-allNames)
 while (-iteration LESS 100)
   set (-processedDaps)
   set (-unprocessedDaps ROOT)
-  set (-knownDapPairs)
 
   while (-unprocessedDaps)
     list (POP_FRONT -unprocessedDaps -dapId)
@@ -574,73 +728,8 @@ while (-iteration LESS 100)
     endforeach ()
   endwhile ()
 
-  set (-namePairs)
-  foreach (-name IN LISTS -allNames)
-    _DAPPER_NAME_PREFIX(-namePrefix "${-name}")
-    set (-members)
-
-    get_property (
-      -selectedDapId GLOBAL PROPERTY "${-namePrefix}SelectedPackage"
-    )
-    if (-selectedDapId)
-      string (
-        CONFIGURE [["@-selectedDapId@"]] -jsonDapId @ONLY ESCAPE_QUOTES
-      )
-      list (APPEND -members selected "${-jsonDapId}")
-    endif ()
-
-    get_property (-knownDapIds GLOBAL PROPERTY "${-namePrefix}KnownPackages")
-    list (APPEND -relevantDaps ${-knownDapIds})
-    _DAPPER_LIST_TO_JSON(-jsonKnown ${-knownDapIds})
-    list (APPEND -members known "${-jsonKnown}")
-
-    _DAPPER_KV_PAIRS_TO_JSON(-jsonName ${-members})
-    list (APPEND -namePairs "${-name}" "${-jsonName}")
-  endforeach ()
-  _DAPPER_KV_PAIRS_TO_JSON(-jsonNames ${-namePairs})
-
-  foreach (-dapId IN LISTS -allDaps)
-    _DAPPER_DAP_PREFIX(-dapPrefix "${-dapId}")
-
-    get_property (-version GLOBAL PROPERTY "${-dapPrefix}Version")
-    string (CONFIGURE [["@-version@"]] -jsonVersion @ONLY ESCAPE_QUOTES)
-
-    set (-dependencies)
-    get_property (-declarations GLOBAL PROPERTY "${-dapPrefix}Declarations")
-    foreach (-decl IN LISTS -declarations)
-      _DAPPER_DECLARATION_PREFIX(-declPrefix "${-decl}")
-      get_property (-name GLOBAL PROPERTY "${-declPrefix}Name")
-      if (-name IN_LIST -allNames)
-        get_property (
-          -requiredVersion GLOBAL PROPERTY "${-declPrefix}RequiredVersion"
-        )
-        string (
-          CONFIGURE
-            [[{"name":"@-name@","requiredVersion":"@-requiredVersion@"}]]
-            -jsonDependency @ONLY ESCAPE_QUOTES
-        )
-        list (APPEND -dependencies "${-jsonDependency}")
-      endif ()
-    endforeach ()
-    _DAPPER_ARRAY_TO_JSON(-jsonDependencies ${-dependencies})
-
-    string (
-      CONFIGURE
-        [[{"version":@-jsonVersion@,"dependencies":@-jsonDependencies@}]]
-        -jsonDap @ONLY
-    )
-    list (APPEND -knownDapPairs "${-dapId}" "${-jsonDap}")
-  endforeach ()
-  _DAPPER_KV_PAIRS_TO_JSON(-jsonKnownDaps ${-knownDapPairs})
-
-  string (
-    CONFIGURE
-      [[{"entry":"ROOT","names":@-jsonNames@,"daps":@-jsonKnownDaps@}]]
-      -json @ONLY
-  )
-
   set (dappiFinished true)
-  set (-inputJsonFile "${DAPPER_BINARY_DIR}/dappi.json")
+  _DAPPER_BUILD_JSON(-json "${-allNames}" "${-allDaps}")
   file (WRITE "${-inputJsonFile}" "${-json}")
   execute_process (
     COMMAND "${DAPPI_EXECUTABLE}" run
@@ -649,7 +738,7 @@ while (-iteration LESS 100)
     INPUT_FILE "${-inputJsonFile}"
   )
   if (NOT -code EQUAL 0)
-    message (FATAL_ERROR "dappi failed.")
+    message (FATAL_ERROR "dappi run failed.")
   endif ()
   cmake_language (EVAL CODE "${-dappiInsts}")
 
@@ -667,6 +756,56 @@ message (STATUS "Resolving dependencies: done.")
 
 _DAPPER_ALL_RELEVANT_NAMES(-allNames)
 list (SORT -allNames)
+
+message (STATUS "Checking integrities...")
+
+foreach (-name IN LISTS -allNames)
+  _DAPPER_NAME_PREFIX(-namePrefix "${-name}")
+  get_property (-dapId GLOBAL PROPERTY "${-namePrefix}SelectedPackage")
+  _DAPPER_DAP_PREFIX(-dapPrefix "${-dapId}")
+  get_property (-algorithm GLOBAL PROPERTY "${-dapPrefix}IntegrityAlgorithm")
+  if (-algorithm)
+    if (NOT -algorithm STREQUAL "sha512")
+      message (
+        FATAL_ERROR
+        "Integrity check failed: unsupported algorithm - ${-algorithm}"
+      )
+    endif ()
+    get_property (-originalDigest GLOBAL PROPERTY "${-dapPrefix}Digest")
+  else ()
+    set (-originalDigest)
+  endif ()
+  get_property (-sourceDir GLOBAL PROPERTY "${-dapPrefix}SourceDir")
+  get_property (-url GLOBAL PROPERTY "${-dapPrefix}URL")
+  get_property (-revision GLOBAL PROPERTY "${-dapPrefix}Fragment")
+  _DAPPER_CALC_INTEGRITY(-digest "${-sourceDir}" "${-revision}")
+  if (-originalDigest AND NOT -digest STREQUAL -originalDigest)
+    message (
+      FATAL_ERROR
+      "Integrity check failed: "
+      "digests mismatch at ${-name} from ${-url}#${-revision} - "
+      "${-digest} vs ${-originalDigest}"
+    )
+  endif ()
+  set_property (GLOBAL PROPERTY "${-dapPrefix}IntegrityAlgorithm" sha512)
+  set_property (GLOBAL PROPERTY "${-dapPrefix}Digest" "${-digest}")
+endforeach ()
+
+message (STATUS "Checking integrities: done.")
+
+_DAPPER_BUILD_JSON(-json "${-allNames}" "${-allDaps}")
+file (WRITE "${-inputJsonFile}" "${-json}")
+execute_process (
+  COMMAND
+    "${DAPPI_EXECUTABLE}"
+    save -o "${DAPPER_SOURCE_DIR}/DependencyAwarenessLock.yml"
+  RESULT_VARIABLE -code
+  INPUT_FILE "${-inputJsonFile}"
+)
+if (NOT -code EQUAL 0)
+  message (FATAL_ERROR "dappi save failed.")
+endif ()
+
 set (-useFileLines)
 foreach (-name IN LISTS -allNames)
   _DAPPER_NAME_PREFIX(-namePrefix "${-name}")
