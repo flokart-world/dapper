@@ -35,6 +35,7 @@
 #include <semver.hpp>
 #include <minisat/core/Solver.h>
 #include "general_violation_counters.hpp"
+#include "violation_counter_merger.hpp"
 
 namespace {
 
@@ -691,7 +692,7 @@ int run(int, char *[]) {
         }
     }
 
-    std::vector<Minisat::Var> penalties;
+    violation_counter_merger penalty_groups;
     std::vector<Minisat::Var> unlocks;
 
     auto names_it = state.find("names");
@@ -790,39 +791,47 @@ int run(int, char *[]) {
                     }
                 }
 
+                std::vector<Minisat::Var> counters(version_groups.size());
+
                 /*
-                 * !version_penalty[n] implies !version_n_or_less_selected[n]
+                 * version_n_or_less_selected[n] implies counter[size - n]
+                 *   where 0 <= n < size
                  *
                  * Not selecting the package is best. Selecting the latest
                  * version is second best, so we penalize one point.
                  * Selecting earlier versions is worse than that, so we
                  * penalize one point each time it is downgraded.
                  */
+                std::size_t num_penalties = counters.size();
                 for (
                     auto upper_bound = version_groups.begin();
                     upper_bound != version_groups.end();
                     ++upper_bound
                 ) {
+                    auto &counter = counters[--num_penalties];
+                    counter = resolution.newVar();
+
                     /*
                      * Given that version_n_or_less_selected[n] is:
                      *   A or B or C,
-                     * !penalty[n] implies !(A or B or C).
-                     * (A or B or C) implies penalty[n] is identical to
-                     * !(A or B or C) or penalty[n], which is identical to
-                     * (!A and !B and !C) or penalty[n].
+                     * (A or B or C) implies counter[n] is identical to
+                     * !(A or B or C) or counter[n], which is identical to
+                     * (!A and !B and !C) or counter[n].
                      */
-                    Minisat::Var penalty = resolution.newVar();
                     auto end = std::next(upper_bound);
                     for (auto it = version_groups.begin(); it != end; ++it) {
                         for (auto candidate : it->second) {
                             resolution.addClause(
                                 ~Minisat::mkLit(candidate->var),
-                                Minisat::mkLit(penalty)
+                                Minisat::mkLit(counter)
                             );
                         }
                     }
-                    penalties.push_back(penalty);
                 }
+
+                penalty_groups.add(
+                    violation_counter_set(std::move(counters))
+                );
             }
 
             if (maybe_unlocked) {
@@ -949,10 +958,10 @@ int run(int, char *[]) {
         }
     }
 
-    if (!penalties.empty()) {
+    if (!penalty_groups.empty()) {
         /* Now we improve the model */
-        auto penalty_counters =
-                make_general_violation_counters(resolution, penalties);
+        penalty_groups.merge(resolution);
+        auto penalty_counters = penalty_groups.release();
         auto satisfiable = [&](std::nullptr_t, Minisat::Var var) {
             auto assumption = ~Minisat::mkLit(var);
             if (resolution.solve(assumption)) {
