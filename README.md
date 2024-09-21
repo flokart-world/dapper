@@ -64,5 +64,8 @@ Right now `DAPPER_DEFINE_PRESET_HOSTS` defines the preset host: "github". `DAPPE
 $ git clone https://github.com/flokart-world/dapper.git
 $ cmake -B dapper-demo -S dapper/Examples/demo
 $ cd dapper-demo
-$ cmake --build . --config Debug -t dapper-install
+$ cmake --build . --config Debug
+
+# Re-invoking the dependency resolution
+$ cmake -D DAPPER_INSTALL=ON .
 ```

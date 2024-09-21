@@ -36,8 +36,6 @@ function (DAPPER_USE)
 endfunction ()
 
 function (_DAPPER_RESOLVE_DEPENDENCIES -outDepsFile -integration)
-  cmake_parse_arguments (PARSE_ARGV 2 "-arg" "" "" "OPTIONS")
-
   cmake_language (
     CALL
       "_DAPPER_REPOSITORIES_DIR_FOR_${-integration}"
@@ -45,42 +43,27 @@ function (_DAPPER_RESOLVE_DEPENDENCIES -outDepsFile -integration)
   )
 
   set (-depsFile "${CMAKE_CURRENT_BINARY_DIR}/ResolvedDependencies.cmake")
-  list (TRANSFORM -arg_OPTIONS PREPEND "-D")
 
   set (-configFile "${DAPPER_CONFIG_FILE}")
   if (NOT -configFile)
     set (-configFile "$ENV{DAPPER_CONFIG_FILE}")
   endif ()
 
-  set (
-    -commandArgs
-    -D "DAPPER_ROOT_DIR=${Dapper_DIR}"
-    -D "DAPPER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
-    -D "DAPPER_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
-    -D "DAPPER_PROJECT_NAME=${PROJECT_NAME}"
-    -D "DAPPER_PROJECT_VERSION=${PROJECT_VERSION}"
-    -D "DAPPER_REPOSITORIES_DIR=${-reposDir}"
-    -D "DAPPER_CONFIG_FILE=${-configFile}"
-    ${-arg_OPTIONS}
-    -P "${Dapper_DIR}/Scripts/ResolveDependencies.cmake"
-  )
-
-  add_custom_target (
-    dapper-install
-    COMMAND "${CMAKE_COMMAND}" ${-commandArgs}
-    VERBATIM
-  )
-  set_target_properties (dapper-install PROPERTIES FOLDER "Dapper")
-
-  if (NOT EXISTS "${-depsFile}")
-    execute_process (
-      COMMAND "${CMAKE_COMMAND}" ${-commandArgs}
-      RESULT_VARIABLE -code
-    )
-    if (NOT -code EQUAL 0)
-      message (FATAL_ERROR "Dependency resolution failed.")
-    endif ()
+  if (NOT EXISTS "${-depsFile}" OR DAPPER_INSTALL)
+    set (DAPPER_ROOT_DIR "${Dapper_DIR}")
+    set (DAPPER_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+    set (DAPPER_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}")
+    set (DAPPER_PROJECT_NAME "${PROJECT_NAME}")
+    set (DAPPER_PROJECT_VERSION "${PROJECT_VERSION}")
+    set (DAPPER_REPOSITORIES_DIR "${-reposDir}")
+    set (DAPPER_CONFIG_FILE "${-configFile}")
+    include ("${Dapper_DIR}/Scripts/ResolveDependencies.cmake")
   endif ()
+
+  set (
+    DAPPER_INSTALL OFF
+    CACHE BOOL "Set ON to invoke the dependency resolution." FORCE
+  )
 
   set ("${-outDepsFile}" "${-depsFile}" PARENT_SCOPE)
 endfunction ()
@@ -96,7 +79,7 @@ macro (DAPPER_INTEGRATE_WITH -integration)
 
   set (DAPPER_TOP_LEVEL_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 
-  _DAPPER_RESOLVE_DEPENDENCIES(dapperDepsFile "${-integration}" ${ARGN})
+  _DAPPER_RESOLVE_DEPENDENCIES(dapperDepsFile "${-integration}")
 
   set_property (
     GLOBAL APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${dapperDepsFile}"
